@@ -134,7 +134,28 @@ class ExperimentalPlan:
 def _measurement_combos(choices: Dict[str, List[Measurement]]
                         ) -> List[Dict[str, Measurement]]:
     """
-    Expand every possible selection (Cartesian product) of measurement options.
+    Generate all possible combinations of measurement selections using Cartesian product.
+
+    For each parameter that needs measurement, there may be multiple measurement methods
+    available (e.g., different lab tests or field procedures). This function creates
+    all possible combinations of selecting one measurement method per parameter.
+
+    Args:
+        choices: Dictionary mapping parameter names to lists of available
+                Measurement objects for that parameter.
+
+    Returns:
+        List of dictionaries, where each dictionary represents one possible
+        combination of measurement selections (parameter -> Measurement).
+
+    Example:
+        If choices = {'density': [test1, test2], 'strength': [test3, test4]},
+        returns: [
+            {'density': test1, 'strength': test3},
+            {'density': test1, 'strength': test4},
+            {'density': test2, 'strength': test3},
+            {'density': test2, 'strength': test4}
+        ]
     """
     if not choices:
         return [{}]
@@ -146,6 +167,25 @@ def _measurement_combos(choices: Dict[str, List[Measurement]]
 
 
 def _fmt_with_unit(symbol: str, value, sig_figs: int = 4) -> str:
+    """
+    Format a numerical value with its appropriate physical unit for display.
+
+    This utility function combines a numerical value with its corresponding unit
+    from the parameter registry, formatting the number with specified significant
+    figures and appending the unit symbol.
+
+    Args:
+        symbol: The parameter symbol/name (e.g., 'bulk_density', 'water_content')
+        value: The numerical value to format (int, float, or other type)
+        sig_figs: Number of significant figures to display for numeric values (default: 4)
+
+    Returns:
+        Formatted string combining the value and unit (e.g., "1.850 g/cm³" or "25.0 %")
+
+    Note:
+        If the symbol is not found in PARAM_UNITS or the value is non-numeric,
+        returns the value as a string without a unit.
+    """
     try:
         unit = PARAM_UNITS[Param(symbol)]
     except ValueError:
@@ -159,6 +199,24 @@ def _fmt_with_unit(symbol: str, value, sig_figs: int = 4) -> str:
 
 def _dedupe_path(path: List[tuple[str, EquationProvider]]
                  ) -> List[tuple[str, EquationProvider]]:
+    """
+    Remove duplicate symbols from an execution path while preserving order.
+
+    In dependency resolution, the same symbol might appear multiple times in a path
+    due to different calculation routes or intermediate steps. This function
+    removes duplicates while maintaining the original execution order, keeping
+    only the first occurrence of each symbol.
+
+    Args:
+        path: List of (symbol, provider) tuples representing an execution path
+
+    Returns:
+        Deduplicated path with duplicate symbols removed, preserving order
+
+    Example:
+        Input: [('A', prov1), ('B', prov2), ('A', prov3), ('C', prov4)]
+        Output: [('A', prov1), ('B', prov2), ('C', prov4)]
+    """
     seen: Set[str] = set()
     out: List[tuple[str, EquationProvider]] = []
     for sym, prov in path:
@@ -169,13 +227,48 @@ def _dedupe_path(path: List[tuple[str, EquationProvider]]
 
 
 class NoPathError(RuntimeError):
+    """
+    Exception raised when no valid execution path can be found to compute target parameters.
+
+    This exception is raised when the dependency graph solver cannot find any combination
+    of algebraic calculations and/or measurements that would allow computing the requested
+    target parameters from the available input data.
+    """
+
     def __init__(self, message: str, missing: Optional[Dict[str, Set[str]]] = None):
+        """
+        Initialize the NoPathError exception.
+
+        Args:
+            message: Descriptive error message explaining why no path was found
+            missing: Optional dictionary mapping missing parameters to sets of
+                    alternative parameters that could potentially provide them
+        """
         super().__init__(message)
         self.missing = missing or {}
 
 
 def _suggest_measurements(reg: Registry, missing: Set[str]) -> Dict[str, List[Measurement]]:
-    """Return a *param → [Measurement]* mapping ordered by (price, duration)."""
+    """
+    Generate ranked measurement suggestions for parameters that cannot be computed algebraically.
+
+    For each missing parameter that requires physical testing or measurement, this function
+    retrieves all available measurement methods from the registry and ranks them by cost
+    and duration to provide the most efficient testing options.
+
+    Args:
+        reg: The measurement and equation provider registry
+        missing: Set of parameter symbols that need to be measured
+
+    Returns:
+        Dictionary mapping each missing parameter to a list of Measurement objects,
+        sorted by ascending cost and then by ascending duration. Each measurement
+        includes details like price, duration, method name, and accuracy.
+
+    Note:
+        The ordering prioritizes cost over duration, so cheaper tests appear first,
+        and among equally priced tests, shorter duration tests appear first.
+    """
     out: Dict[str, List[Measurement]] = {}
     for p in missing:
         opts = sorted(reg.measurements(p), key=lambda m: (m.price, m.duration))
@@ -190,6 +283,25 @@ class DependencyGraphSolver:
     """Find a feasible algebraic path, then flag inputs needing tests."""
 
     def __init__(self, registry: Registry = REG):
+        """
+        Initialize the Dependency Graph Solver with a registry of providers and measurements.
+
+        Sets up the solver with the given registry and initializes internal data structures
+        for efficient dependency resolution. The solver will use uniform-cost search and
+        symbolic reachability analysis to find optimal computation paths.
+
+        Args:
+            registry: Registry containing equation providers and measurement methods.
+                     Defaults to the global REG registry if not specified.
+
+        Attributes initialized:
+            - trace: List for storing execution trace information
+            - alternatives: List of alternative execution paths found
+            - measurement_choices: Dictionary of suggested measurements per parameter
+            - experimental_plans: List of complete experimental plans
+            - _no_measure_needed: Set of parameters derivable without measurements
+            - _providers_for: Lookup dictionary for providers by output parameter
+        """
         self.registry = registry
         self.trace: List[str] = []
         self.alternatives: List[List[tuple[str, EquationProvider]]] = []
@@ -211,6 +323,30 @@ class DependencyGraphSolver:
         known: Set[str],
         want: Set[str]
     ) -> List[tuple[str, EquationProvider]]:
+        """
+        Find the optimal execution order for computing target parameters using uniform-cost search.
+
+        This method implements a uniform-cost search algorithm to find the lowest-cost sequence
+        of equation providers that can compute all desired parameters from the known parameters.
+        It considers provider costs and finds multiple alternative paths if they exist at the
+        same optimal cost.
+
+        Args:
+            known: Set of parameter symbols that are already available/known
+            want: Set of parameter symbols that need to be computed
+
+        Returns:
+            List of (parameter, provider) tuples representing the optimal execution sequence.
+            Each tuple indicates which parameter is computed by which provider.
+
+        Raises:
+            NoPathError: If no combination of providers can compute the desired parameters
+                        from the available inputs.
+
+        Note:
+            The returned path represents one of potentially multiple optimal solutions.
+            All optimal alternatives are stored in self.alternatives for reference.
+        """
         start_have = frozenset(known)
         frontier: List[Tuple[float, frozenset[str], List[tuple[str, EquationProvider]]]] = [
             (0.0, start_have, [])
@@ -257,6 +393,21 @@ class DependencyGraphSolver:
         return self.alternatives[0]
 
     def _providers_for_all(self, have: Set[str]) -> List[EquationProvider]:
+        """
+        Get all providers that can produce parameters not yet available.
+
+        This helper method filters the registry's providers to return only those
+        that produce parameters which are not already in the current 'have' set.
+        This optimization avoids considering providers that would produce redundant
+        or already-computed parameters.
+
+        Args:
+            have: Set of parameter symbols that are already available/computed
+
+        Returns:
+            List of EquationProvider objects that can produce new parameters not
+            currently in the 'have' set.
+        """
         return [
             p for p in self.registry.providers()
             if next(iter(p.provides)) not in have
@@ -271,6 +422,27 @@ class DependencyGraphSolver:
             target_syms: Set[str],
             known: Set[str]
     ) -> List[tuple[str, EquationProvider]]:
+        """
+        Generate an execution plan using greedy back-chaining algorithm.
+
+        This fallback method is used when uniform-cost search fails to find a path.
+        It employs a greedy back-chaining approach, recursively working backwards
+        from target parameters to find providers that can compute them, selecting
+        the apparently best provider at each step based on cost and dependency count.
+
+        Args:
+            target_syms: Set of parameter symbols that need to be computed
+            known: Set of parameter symbols that are already available
+
+        Returns:
+            List of (parameter, provider) tuples representing a feasible execution
+            sequence. The order ensures dependencies are computed before they are needed.
+
+        Note:
+            This method may not find the globally optimal solution but guarantees
+            a valid execution path if one exists. Results are deduplicated to avoid
+            redundant computations.
+        """
         plan: List[tuple[str, EquationProvider]] = []
         produced: Set[str] = set()
         visiting: Set[str] = set()
@@ -314,6 +486,45 @@ class DependencyGraphSolver:
         *targets: str,
         suggest_measurements: bool = True,
     ) -> Tuple[Dict[str, float], List[tuple[str, EquationProvider]], float]:
+        """
+        Solve for target parameters using multi-stage dependency resolution.
+
+        This is the main public API method that implements the complete solver algorithm.
+        It uses a sophisticated multi-stage approach to find the optimal combination of
+        algebraic calculations and physical measurements needed to compute target parameters.
+
+        Algorithm Stages:
+        1. **Symbolic Reachability**: Identify parameters derivable without measurements
+        2. **Uniform-Cost Search**: Find optimal algebraic computation path
+        3. **Measurement Planning**: Suggest measurements for remaining parameters
+
+        Args:
+            ctx: Dictionary of known parameter values (symbol -> value)
+            *targets: Variable number of parameter symbols to compute
+            suggest_measurements: If True, suggest measurements for missing parameters
+
+        Returns:
+            Tuple containing:
+            - Updated context dictionary with computed values
+            - List of (parameter, provider) tuples for algebraic computations
+            - Total cost of the solution (0.0 for measurement-only solutions)
+
+        Side Effects:
+            Updates instance attributes with solution details:
+            - measurement_choices: Suggested measurements per parameter
+            - experimental_plans: Complete experimental plans
+            - alternatives: Alternative algebraic paths found
+            - _no_measure_needed: Parameters derivable without measurements
+
+        Raises:
+            NoPathError: If no combination of calculations and measurements can
+                        satisfy the target parameters.
+
+        Example:
+            >>> solver = DependencyGraphSolver()
+            >>> ctx = {'bulk_density': 1.8, 'water_content': 0.25}
+            >>> result_ctx, plan, cost = solver.solve(ctx, 'shear_strength', 'bearing_capacity')
+        """
 
         # ─── Step 0 – apply any per-provider cost overrides hiding in ctx ───
         for key, val in list(ctx.items()):
