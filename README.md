@@ -1,4 +1,4 @@
-# Solver-Spider: Dependency Graph Solver for Soil Calculations
+# Autonomous Geotechnical Problem Solver and Planner
 
 A sophisticated dependency-graph solver with measurement-suggestion capabilities and symbolic reachability analysis for soil engineering and geotechnical calculations.
 
@@ -73,7 +73,7 @@ Performs a pure symbolic analysis to identify all parameters that can be derived
 ### Stage 2b: Measurement Optimization
 When algebraic paths are insufficient, suggests the most cost-effective combination of measurements and calculations, excluding parameters already determined to be algebraically derivable.
 
-## Applications
+## Example Applications
 
 - **Geotechnical Engineering**: Soil parameter calculations and analysis
 - **Foundation Design**: Bearing capacity and settlement predictions
@@ -88,7 +88,7 @@ We welcome contributions! This project is designed to be extensible and collabor
 ### Development Setup
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/your-username/solver-spider.git`
+2. Clone your fork: `git clone https://github.com/jghorbani2/autonomous-geotechnical-problem-solver-and-planner.git`
 3. Create a feature branch: `git checkout -b feature-name`
 4. Make your changes
 5. Run tests: `python -m pytest`
@@ -109,14 +109,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Citation
 
-If you use Solver-Spider in your research or engineering work, please cite:
+If you use Autonomous Geotechnical Problem Solver and Planner in your research or engineering work, please cite:
 
 ```bibtex
-@software{solver_spider,
-  title = {Solver-Spider: Dependency Graph Solver for Soil Calculations},
-  author = {Your Name},
+@software{autonomous_geotechnical_solver,
+  title = {Autonomous Geotechnical Problem Solver and Planner},
+  author = {Javad Ghorbani},
   year = {2024},
-  url = {https://github.com/your-username/solver-spider}
+  url = {https://github.com/jghorbani2/autonomous-geotechnical-problem-solver-and-planner}
 }
 ```
 
@@ -128,6 +128,3 @@ For questions, issues, or contributions, please:
 - Submit a pull request
 - Contact the maintainers
 
----
-
-*Built with ❤️ for the geotechnical engineering community*
